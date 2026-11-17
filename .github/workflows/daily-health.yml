@@ -1,0 +1,20 @@
+name: Daily watcher health
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check Railway and send Pushover report
+        run: python3 health_report.py
+        env:
+          WATCHER_HEALTH_URL: ${{ vars.WATCHER_HEALTH_URL }}
+          HEALTH_TOKEN: ${{ secrets.HEALTH_TOKEN }}
+          PUSHOVER_APP_TOKEN: ${{ secrets.PUSHOVER_APP_TOKEN }}
+          PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}

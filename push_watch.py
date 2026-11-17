@@ -1,9 +1,13 @@
 """Hosted watcher with outgoing HTTPS only and persistent phone acknowledgement."""
 import argparse
+import hmac
+import json
 import logging
 import os
 import re
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -99,6 +103,39 @@ def poll(state, push):
     return items is not None
 
 
+def serve_health(state):
+    token = os.environ.get('HEALTH_TOKEN')
+    if not token:
+        return
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_GET(self):
+            authorization = self.headers.get('Authorization', '')
+            if self.path != '/health' or not hmac.compare_digest(
+                    authorization.encode(), ('Bearer ' + token).encode()):
+                self.send_error(404)
+                return
+            values = state.state()
+            data = json.dumps(dict(
+                last_success=values.get('last_success'),
+                availability=values.get('availability', 'unknown'),
+                delivery_error=values.get('last_delivery_error', ''),
+                mode='stopped' if values.get('stopped') == 'yes' else 'armed',
+                last_sent=values.get('last_sent'),
+            )).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    server = ThreadingHTTPServer(('0.0.0.0', int(os.environ.get('PORT', '8080'))), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--test-push', action='store_true')
@@ -124,6 +161,7 @@ def main():
             if previous.get('receipt'):
                 push.cancel(previous['receipt'])
             state.state(arm_generation=generation, stopped='no', receipt='', session='')
+        serve_health(state)
         LOG.info('Push watcher started; stopped=%s', state.state().get('stopped'))
         delay = 60
         while True:
